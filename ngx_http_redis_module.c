@@ -18,6 +18,10 @@ typedef struct {
     ngx_int_t                  index;
     ngx_int_t                  db;
     ngx_uint_t                 gzip_flag;
+
+#if (NGX_HTTP_CACHE)
+    ngx_http_complex_value_t   cache_key;
+#endif
 } ngx_http_redis_loc_conf_t;
 
 
@@ -45,6 +49,14 @@ static char *ngx_http_redis_merge_loc_conf(ngx_conf_t *cf,
 static char *ngx_http_redis_pass(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
+#if (NGX_HTTP_CACHE)
+static ngx_int_t ngx_http_redis_create_key(ngx_http_request_t *r);
+static char *ngx_http_redis_cache(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
+static char *ngx_http_redis_cache_key(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
+#endif
+
 static ngx_conf_bitmask_t  ngx_http_redis_next_upstream_masks[] = {
     { ngx_string("error"), NGX_HTTP_UPSTREAM_FT_ERROR },
     { ngx_string("timeout"), NGX_HTTP_UPSTREAM_FT_TIMEOUT },
@@ -54,6 +66,7 @@ static ngx_conf_bitmask_t  ngx_http_redis_next_upstream_masks[] = {
     { ngx_null_string, 0 }
 };
 
+ngx_module_t  ngx_http_redis_module;
 
 static ngx_command_t  ngx_http_redis_commands[] = {
 
@@ -114,6 +127,94 @@ static ngx_command_t  ngx_http_redis_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_redis_loc_conf_t, gzip_flag),
       NULL },
+
+#if (NGX_HTTP_CACHE)
+
+    { ngx_string("redis_cache"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_http_redis_cache,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      0,
+      NULL },
+
+    { ngx_string("redis_cache_key"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_http_redis_cache_key,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      0,
+      NULL },
+
+    { ngx_string("redis_cache_path"),
+      NGX_HTTP_MAIN_CONF|NGX_CONF_2MORE,
+      ngx_http_file_cache_set_slot,
+      0,
+      0,
+      &ngx_http_redis_module },
+
+    { ngx_string("redis_cache_bypass"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_http_set_predicate_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_bypass),
+      NULL },
+
+    { ngx_string("redis_no_cache"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_http_set_predicate_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.no_cache),
+      NULL },
+
+    { ngx_string("redis_cache_valid"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_http_file_cache_valid_set_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_valid),
+      NULL },
+
+    { ngx_string("redis_cache_min_uses"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_num_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_min_uses),
+      NULL },
+
+    { ngx_string("redis_cache_use_stale"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_conf_set_bitmask_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_use_stale),
+      &ngx_http_redis_next_upstream_masks },
+
+    { ngx_string("redis_cache_methods"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_conf_set_bitmask_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_methods),
+      &ngx_http_upstream_cache_method_mask },
+
+    { ngx_string("redis_cache_lock"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_lock),
+      NULL },
+
+    { ngx_string("redis_cache_lock_timeout"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_msec_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_lock_timeout),
+      NULL },
+
+    { ngx_string("redis_cache_revalidate"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_redis_loc_conf_t, upstream.cache_revalidate),
+      NULL },
+
+#endif
 
       ngx_null_command
 };
@@ -228,6 +329,10 @@ ngx_http_redis_handler(ngx_http_request_t *r)
     u->abort_request = ngx_http_redis_abort_request;
     u->finalize_request = ngx_http_redis_finalize_request;
 
+#if (NGX_HTTP_CACHE)
+    u->create_key = ngx_http_redis_create_key;
+#endif
+
 #if defined nginx_version && nginx_version < 8011
     r->upstream = u;
 #endif
@@ -255,6 +360,28 @@ ngx_http_redis_handler(ngx_http_request_t *r)
     return NGX_DONE;
 }
 
+#if (NGX_HTTP_CACHE)
+
+static ngx_int_t
+ngx_http_redis_create_key(ngx_http_request_t *r)
+{
+    ngx_str_t                  *key;
+    ngx_http_redis_loc_conf_t  *rlcf;
+
+    key = ngx_array_push(&r->cache->keys);
+    if (key == NULL) {
+        return NGX_ERROR;
+    }
+
+    rlcf = ngx_http_get_module_loc_conf(r, ngx_http_redis_module);
+    if (ngx_http_complex_value(r, &rlcf->cache_key, key) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+#endif
 
 static ngx_int_t
 ngx_http_redis_create_request(ngx_http_request_t *r)
@@ -761,6 +888,17 @@ ngx_http_redis_create_loc_conf(ngx_conf_t *cf)
     conf->upstream.pass_request_headers = 0;
     conf->upstream.pass_request_body = 0;
 
+#if (NGX_HTTP_CACHE)
+    conf->upstream.cache = NGX_CONF_UNSET_PTR;
+    conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
+    conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
+    conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
+    conf->upstream.cache_valid = NGX_CONF_UNSET_PTR;
+    conf->upstream.cache_lock = NGX_CONF_UNSET;
+    conf->upstream.cache_lock_timeout = NGX_CONF_UNSET_MSEC;
+    conf->upstream.cache_revalidate = NGX_CONF_UNSET;
+#endif
+
     /*
      * initialize additional parameters for hide
      * "Content-Encoding: gzip" header
@@ -807,6 +945,70 @@ ngx_http_redis_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
         conf->upstream.next_upstream = NGX_CONF_BITMASK_SET
                                        |NGX_HTTP_UPSTREAM_FT_OFF;
     }
+
+#if (NGX_HTTP_CACHE)
+
+    ngx_conf_merge_ptr_value(conf->upstream.cache,
+                             prev->upstream.cache, NULL);
+
+    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
+        ngx_shm_zone_t  *shm_zone;
+
+        shm_zone = conf->upstream.cache;
+
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "\"redis_cache\" zone \"%V\" is unknown",
+                           &shm_zone->shm.name);
+
+        return NGX_CONF_ERROR;
+    }
+
+    ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
+                              prev->upstream.cache_min_uses, 1);
+
+    ngx_conf_merge_bitmask_value(conf->upstream.cache_use_stale,
+                                 prev->upstream.cache_use_stale,
+                                 (NGX_CONF_BITMASK_SET
+                                  |NGX_HTTP_UPSTREAM_FT_OFF));
+
+    if (conf->upstream.cache_use_stale & NGX_HTTP_UPSTREAM_FT_OFF) {
+        conf->upstream.cache_use_stale = NGX_CONF_BITMASK_SET
+            |NGX_HTTP_UPSTREAM_FT_OFF;
+    }
+
+    if (conf->upstream.cache_use_stale & NGX_HTTP_UPSTREAM_FT_ERROR) {
+        conf->upstream.cache_use_stale |= NGX_HTTP_UPSTREAM_FT_NOLIVE;
+    }
+
+    if (conf->upstream.cache_methods == 0) {
+        conf->upstream.cache_methods = prev->upstream.cache_methods;
+    }
+
+    conf->upstream.cache_methods |= NGX_HTTP_GET|NGX_HTTP_HEAD;
+
+    ngx_conf_merge_ptr_value(conf->upstream.cache_bypass,
+                             prev->upstream.cache_bypass, NULL);
+
+    ngx_conf_merge_ptr_value(conf->upstream.no_cache,
+                             prev->upstream.no_cache, NULL);
+
+    ngx_conf_merge_ptr_value(conf->upstream.cache_valid,
+                             prev->upstream.cache_valid, NULL);
+
+    if (conf->cache_key.value.data == NULL) {
+        conf->cache_key = prev->cache_key;
+    }
+
+    ngx_conf_merge_value(conf->upstream.cache_lock,
+                         prev->upstream.cache_lock, 0);
+
+    ngx_conf_merge_msec_value(conf->upstream.cache_lock_timeout,
+                              prev->upstream.cache_lock_timeout, 5000);
+
+    ngx_conf_merge_value(conf->upstream.cache_revalidate,
+                         prev->upstream.cache_revalidate, 0);
+
+#endif
 
     /* Initialize hash for hide "Content-Encoding" header */
     hash.max_size = 512;
@@ -916,3 +1118,64 @@ ngx_http_redis_add_variables(ngx_conf_t *cf)
 
     return NGX_OK;
 }
+
+#if (NGX_HTTP_CACHE)
+static char *
+ngx_http_redis_cache(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_redis_loc_conf_t *rlcf = conf;
+
+    ngx_str_t  *value;
+
+    value = cf->args->elts;
+
+    if (rlcf->upstream.cache != NGX_CONF_UNSET_PTR) {
+        return "is duplicate";
+    }
+
+    if (ngx_strcmp(value[1].data, "off") == 0) {
+        rlcf->upstream.cache = NULL;
+        return NGX_CONF_OK;
+    }
+
+    if (rlcf->upstream.store > 0 || rlcf->upstream.store_lengths) {
+        return "is incompatible with \"redis_store\"";
+    }
+
+    rlcf->upstream.cache = ngx_shared_memory_add(cf, &value[1], 0,
+                                                 &ngx_http_redis_module);
+    if (rlcf->upstream.cache == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+
+
+static char *
+ngx_http_redis_cache_key(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_redis_loc_conf_t         *rlcf = conf;
+
+    ngx_str_t                         *value;
+    ngx_http_compile_complex_value_t   ccv;
+
+    value = cf->args->elts;
+
+    if (rlcf->cache_key.value.data) {
+        return "is duplicate";
+    }
+
+    ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
+
+    ccv.cf = cf;
+    ccv.value = &value[1];
+    ccv.complex_value = &rlcf->cache_key;
+
+    if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+#endif
